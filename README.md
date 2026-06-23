@@ -34,8 +34,4 @@ Python, Java, C++ and C#. Always up for an interesting project to build with peo
 
 </div>
 
-### Get in touch
-
-[![Email](https://img.shields.io/badge/Email-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:kramerp28@icloud.com)
-
 Curious where people are reading this from? I keep a live visitor globe — link coming once it's up.
