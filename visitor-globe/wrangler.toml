@@ -1,0 +1,10 @@
+name = "visitor-globe"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Stores the list of visitor pings. Create the namespace with:
+#   npx wrangler kv namespace create VISITORS
+# then paste the returned id below.
+[[kv_namespaces]]
+binding = "VISITORS"
+id = "bbbf0c1cf8c54f0186fa3eba7990ee20"

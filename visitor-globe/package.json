@@ -1,0 +1,13 @@
+{
+  "name": "visitor-globe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A live globe that plots approximate locations of people who visit the page.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

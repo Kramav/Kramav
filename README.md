@@ -34,4 +34,4 @@ Python, Java, C++ and C#. Always up for an interesting project to build with peo
 
 </div>
 
-Curious where people are reading this from? I keep a live visitor globe — link coming once it's up.
+Curious where people are reading this from? I keep a [live visitor globe](https://visitor-globe.kramerp28.workers.dev) that plots roughly where everyone opens it.
