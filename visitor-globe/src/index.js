@@ -19,6 +19,9 @@ export default {
     if (url.pathname === "/api/points" && request.method === "GET") {
       return listPoints(env);
     }
+    if (url.pathname === "/globe.svg" && request.method === "GET") {
+      return renderGlobe(env);
+    }
     if (url.pathname === "/" || url.pathname === "") {
       return new Response(PAGE, {
         headers: { "content-type": "text/html; charset=utf-8" },
@@ -85,6 +88,165 @@ function json(body) {
       "cache-control": "no-store",
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Globe image (/globe.svg)
+//
+// Draws an orthographic 3D globe with continent outlines and a glowing ping for
+// every place a visitor has opened the page. Rendered as an SVG so it can be
+// embedded directly in a GitHub README (which strips JS but allows images).
+// ---------------------------------------------------------------------------
+
+const LAND_KEY = "land-geojson";
+// Low-res world land outlines (~110m). Cached in KV after the first fetch.
+const LAND_URL =
+  "https://cdn.jsdelivr.net/gh/martynafford/natural-earth-geojson@master/110m/physical/ne_110m_land.json";
+
+const SIZE = 440; // viewBox px
+const R = 200; // globe radius
+const CX = SIZE / 2;
+const CY = SIZE / 2;
+const D2R = Math.PI / 180;
+
+async function renderGlobe(env) {
+  const [land, points] = await Promise.all([getLand(env), readPoints(env)]);
+  const svg = buildGlobeSvg(land, Object.values(points));
+  return new Response(svg, {
+    headers: {
+      "content-type": "image/svg+xml; charset=utf-8",
+      // Let GitHub's image proxy refresh it every few minutes.
+      "cache-control": "public, max-age=300",
+    },
+  });
+}
+
+async function getLand(env) {
+  let raw = await env.VISITORS.get(LAND_KEY);
+  if (!raw) {
+    try {
+      const res = await fetch(LAND_URL, { cf: { cacheTtl: 86400 } });
+      if (res.ok) {
+        raw = await res.text();
+        await env.VISITORS.put(LAND_KEY, raw);
+      }
+    } catch {
+      /* network hiccup — globe just renders without continents this time */
+    }
+  }
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+// Orthographic projection. Returns [x, y] on screen, or null if the point is on
+// the far side of the globe (hidden behind it).
+function project(lonDeg, latDeg, lon0, lat0) {
+  const lon = lonDeg * D2R;
+  const lat = latDeg * D2R;
+  const l0 = lon0 * D2R;
+  const p0 = lat0 * D2R;
+  const cosc =
+    Math.sin(p0) * Math.sin(lat) +
+    Math.cos(p0) * Math.cos(lat) * Math.cos(lon - l0);
+  if (cosc < 0) return null;
+  const x = R * Math.cos(lat) * Math.sin(lon - l0);
+  const y =
+    R * (Math.cos(p0) * Math.sin(lat) - Math.sin(p0) * Math.cos(lat) * Math.cos(lon - l0));
+  return [CX + x, CY - y];
+}
+
+// Run a callback over every coordinate ring in a GeoJSON land file.
+function eachRing(geo, cb) {
+  if (!geo) return;
+  const feats = geo.type === "FeatureCollection" ? geo.features : [geo];
+  for (const f of feats) {
+    const g = f.geometry || f;
+    if (!g) continue;
+    if (g.type === "Polygon") {
+      for (const ring of g.coordinates) cb(ring);
+    } else if (g.type === "MultiPolygon") {
+      for (const poly of g.coordinates) for (const ring of poly) cb(ring);
+    }
+  }
+}
+
+const FRAMES = 24; // rotation steps (more = smoother, larger file)
+const SPIN = 22; // seconds for one full rotation
+const TILT = 18; // fixed north-ward tilt of the globe's axis
+
+// Continent outlines for one viewing angle, split where rings cross to the far
+// side. Coordinates are rounded and decimated to keep each frame small.
+function frameLand(land, lon0) {
+  let d = "";
+  eachRing(land, (ring) => {
+    let drawing = false, px = 0, py = 0;
+    for (const [lon, lat] of ring) {
+      const p = project(lon, lat, lon0, TILT);
+      if (p) {
+        const x = p[0], y = p[1];
+        if (drawing && Math.abs(x - px) < 1 && Math.abs(y - py) < 1) continue;
+        d += (drawing ? "L" : "M") + Math.round(x) + " " + Math.round(y) + " ";
+        drawing = true; px = x; py = y;
+      } else {
+        drawing = false;
+      }
+    }
+  });
+  return d;
+}
+
+// Glowing pings for one viewing angle (hidden ones, on the far side, dropped).
+function framePings(points, lon0) {
+  return points
+    .map((p) => ({ p, xy: project(p.lng, p.lat, lon0, TILT) }))
+    .filter((d) => d.xy)
+    .sort((a, b) => (a.p.count || 1) - (b.p.count || 1))
+    .map(({ p, xy }) => {
+      const r = Math.min(2.2 + Math.log10((p.count || 1) + 1) * 2.4, 7);
+      const x = Math.round(xy[0]), y = Math.round(xy[1]);
+      return (
+        `<circle cx="${x}" cy="${y}" r="${(r * 2.4).toFixed(1)}" fill="#74c7ec" opacity="0.18"/>` +
+        `<circle cx="${x}" cy="${y}" r="${r.toFixed(1)}" fill="#9fe0ff"/>`
+      );
+    })
+    .join("");
+}
+
+// A rotating globe: one pre-projected frame per angle, flipped through with SMIL
+// so the planet appears to spin. Animation runs even when embedded as an image.
+function buildGlobeSvg(land, points) {
+  let frames = "";
+  for (let i = 0; i < FRAMES; i++) {
+    const lon0 = (i * 360) / FRAMES;
+    const begin = ((i * SPIN) / FRAMES).toFixed(2);
+    frames +=
+      `<g opacity="0">` +
+      `<animate attributeName="opacity" begin="${begin}s" dur="${SPIN}s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;${(1 / FRAMES).toFixed(4)};1" values="1;0;0"/>` +
+      `<path d="${frameLand(land, lon0)}" fill="none" stroke="#3f7fb3" stroke-width="0.9" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>` +
+      framePings(points, lon0) +
+      `</g>`;
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SIZE} ${SIZE}" width="${SIZE}" height="${SIZE}" role="img" aria-label="Rotating globe of where people read this from">
+<defs>
+<radialGradient id="ocean" cx="38%" cy="34%" r="75%">
+<stop offset="0%" stop-color="#10243a"/>
+<stop offset="65%" stop-color="#0a1626"/>
+<stop offset="100%" stop-color="#05060a"/>
+</radialGradient>
+<radialGradient id="halo" cx="50%" cy="50%" r="50%">
+<stop offset="78%" stop-color="#74c7ec" stop-opacity="0"/>
+<stop offset="100%" stop-color="#74c7ec" stop-opacity="0.22"/>
+</radialGradient>
+</defs>
+<circle cx="${CX}" cy="${CY}" r="${R + 14}" fill="url(#halo)"/>
+<circle cx="${CX}" cy="${CY}" r="${R}" fill="url(#ocean)" stroke="#1f3a5c" stroke-width="1"/>
+${frames}
+</svg>`;
 }
 
 const PAGE = `<!doctype html>
