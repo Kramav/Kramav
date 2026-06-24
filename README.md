@@ -13,9 +13,9 @@
 ### About
 
 I'm an electrical engineering student with a long-standing interest in computer science that I've
-pursued largely on my own. My coursework is grounded in hardware, circuits, and signals, while
-software is the side I keep returning to. I learn best by building real projects and reading
-through other people's code, and I'm steadily working toward a more rigorous foundation in
+pursued largely on my own. My coursework is grounded in hardware, circuits, and signals, but I'm
+most drawn to where that meets software — and that's the side I keep returning to. I learn best by
+building real projects end to end, and I'm steadily working toward a more rigorous foundation in
 programming and systems.
 
 ### Technical skills
@@ -32,6 +32,13 @@ programming and systems.
 - Working through my electrical engineering degree
 - Teaching myself computer science fundamentals — data structures, algorithms, and systems
 - Applying the theory in small projects written in Python, C++, Java, and C#
+
+### Projects
+
+**[Visitor globe](https://github.com/Kramav/Kramav/tree/main/visitor-globe)** — a globe that maps
+roughly where people open my profile from. Built end to end on Cloudflare Workers: edge
+geolocation, KV storage, a draggable WebGL view, and a custom-rendered 3D globe baked to an
+animated image — no servers and no API keys. ([live demo](https://visitor-globe.kramerp28.workers.dev))
 
 ### GitHub activity
 
