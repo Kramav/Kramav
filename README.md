@@ -23,7 +23,7 @@ understanding systems deeply rather than just getting them to run.
 - **Undergraduate research — biosensor instrumentation.** Hardware and signal work in a
   neonatal-care research lab. Co-author on the grant funding the position and a contributor to a
   forthcoming publication.
-- **Engineering co-op — Salas O'Brien.** Controls and automation work involving PLCs and
+- **Engineering co-op** Controls and automation work involving PLCs and
   industrial control systems.
 
 ### Technical skills
