@@ -5,9 +5,13 @@
   "description": "A live globe that plots approximate locations of people who visit the page.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "build-globe": "node scripts/build-globe.mjs",
+    "upload-globe": "wrangler kv key put globe-gif --path globe.gif --binding VISITORS --remote",
+    "globe": "npm run build-globe && npm run upload-globe"
   },
   "devDependencies": {
+    "gifenc": "^1.0.3",
     "wrangler": "^3.90.0"
   }
 }

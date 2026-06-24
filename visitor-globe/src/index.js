@@ -22,6 +22,12 @@ export default {
     if (url.pathname === "/globe.svg" && request.method === "GET") {
       return renderGlobe(env);
     }
+    if (url.pathname === "/globe.gif" && request.method === "GET") {
+      return serveGif(env);
+    }
+    if (url.pathname === "/badge.json" && request.method === "GET") {
+      return badge(env);
+    }
     if (url.pathname === "/" || url.pathname === "") {
       return new Response(PAGE, {
         headers: { "content-type": "text/html; charset=utf-8" },
@@ -107,7 +113,6 @@ const SIZE = 440; // viewBox px
 const R = 200; // globe radius
 const CX = SIZE / 2;
 const CY = SIZE / 2;
-const D2R = Math.PI / 180;
 
 async function renderGlobe(env) {
   const [land, points] = await Promise.all([getLand(env), readPoints(env)]);
@@ -119,6 +124,35 @@ async function renderGlobe(env) {
       "cache-control": "public, max-age=300",
     },
   });
+}
+
+// Serves the pre-rendered 3D globe GIF (built by scripts/build-globe.mjs and
+// uploaded to KV). Falls back to the live SVG until the GIF has been published.
+async function serveGif(env) {
+  const buf = await env.VISITORS.get("globe-gif", { type: "arrayBuffer" });
+  if (!buf) return renderGlobe(env);
+  return new Response(buf, {
+    headers: {
+      "content-type": "image/gif",
+      "cache-control": "public, max-age=300",
+    },
+  });
+}
+
+// A live shields.io endpoint badge: "<visits> from <places> places".
+async function badge(env) {
+  const pts = Object.values(await readPoints(env));
+  const visits = pts.reduce((s, p) => s + (p.count || 1), 0);
+  const places = pts.length;
+  return new Response(
+    JSON.stringify({
+      schemaVersion: 1,
+      label: "visitors",
+      message: places ? `${visits} from ${places} places` : "be the first",
+      color: "0e7490",
+    }),
+    { headers: { "content-type": "application/json", "cache-control": "no-store" } }
+  );
 }
 
 async function getLand(env) {
@@ -142,23 +176,6 @@ async function getLand(env) {
   }
 }
 
-// Orthographic projection. Returns [x, y] on screen, or null if the point is on
-// the far side of the globe (hidden behind it).
-function project(lonDeg, latDeg, lon0, lat0) {
-  const lon = lonDeg * D2R;
-  const lat = latDeg * D2R;
-  const l0 = lon0 * D2R;
-  const p0 = lat0 * D2R;
-  const cosc =
-    Math.sin(p0) * Math.sin(lat) +
-    Math.cos(p0) * Math.cos(lat) * Math.cos(lon - l0);
-  if (cosc < 0) return null;
-  const x = R * Math.cos(lat) * Math.sin(lon - l0);
-  const y =
-    R * (Math.cos(p0) * Math.sin(lat) - Math.sin(p0) * Math.cos(lat) * Math.cos(lon - l0));
-  return [CX + x, CY - y];
-}
-
 // Run a callback over every coordinate ring in a GeoJSON land file.
 function eachRing(geo, cb) {
   if (!geo) return;
@@ -174,64 +191,49 @@ function eachRing(geo, cb) {
   }
 }
 
-const FRAMES = 24; // rotation steps (more = smoother, larger file)
-const SPIN = 22; // seconds for one full rotation
-const TILT = 18; // fixed north-ward tilt of the globe's axis
+const SPIN = 26; // seconds for one full, continuous rotation
 
-// Continent outlines for one viewing angle, split where rings cross to the far
-// side. Coordinates are rounded and decimated to keep each frame small.
-function frameLand(land, lon0) {
-  let d = "";
+// A smoothly rotating globe. Continents are drawn once on a wrapped
+// equirectangular strip and panned continuously behind a circular mask — far
+// more fluid than flipping through discrete frames, and a smaller file too.
+// Limb shading plus a soft highlight give it the depth of a real sphere. The
+// animation runs even when the SVG is embedded as an image (e.g. a README).
+function buildGlobeSvg(land, points) {
+  const MAPW = 4 * R; // a full 360° of longitude at the globe's scale
+  const MAPH = 2 * R; // 180° of latitude == the globe's diameter
+  const BOX = CX - R; // top-left corner of the globe's bounding box
+
+  const ex = (lon) => ((lon + 180) / 360) * MAPW;
+  const ey = (lat) => ((90 - lat) / 180) * MAPH;
+
+  // Continent outlines in map coordinates (drawn once). Break the path wherever
+  // a ring jumps across the antimeridian so it doesn't streak across the map.
+  let landPath = "";
   eachRing(land, (ring) => {
-    let drawing = false, px = 0, py = 0;
+    let drawing = false, prevLon = null;
     for (const [lon, lat] of ring) {
-      const p = project(lon, lat, lon0, TILT);
-      if (p) {
-        const x = p[0], y = p[1];
-        if (drawing && Math.abs(x - px) < 1 && Math.abs(y - py) < 1) continue;
-        d += (drawing ? "L" : "M") + Math.round(x) + " " + Math.round(y) + " ";
-        drawing = true; px = x; py = y;
-      } else {
-        drawing = false;
-      }
+      if (prevLon !== null && Math.abs(lon - prevLon) > 180) drawing = false;
+      landPath += (drawing ? "L" : "M") + ex(lon).toFixed(1) + " " + ey(lat).toFixed(1) + " ";
+      drawing = true;
+      prevLon = lon;
     }
   });
-  return d;
-}
 
-// Glowing pings for one viewing angle (hidden ones, on the far side, dropped).
-function framePings(points, lon0) {
-  return points
-    .map((p) => ({ p, xy: project(p.lng, p.lat, lon0, TILT) }))
-    .filter((d) => d.xy)
-    .sort((a, b) => (a.p.count || 1) - (b.p.count || 1))
-    .map(({ p, xy }) => {
+  // Glowing, gently pulsing pings at each visitor location.
+  const pings = points
+    .map((p) => {
       const r = Math.min(2.2 + Math.log10((p.count || 1) + 1) * 2.4, 7);
-      const x = Math.round(xy[0]), y = Math.round(xy[1]);
+      const x = ex(p.lng).toFixed(1), y = ey(p.lat).toFixed(1);
       return (
         `<circle cx="${x}" cy="${y}" r="${(r * 2.4).toFixed(1)}" fill="#74c7ec" opacity="0.18"/>` +
-        `<circle cx="${x}" cy="${y}" r="${r.toFixed(1)}" fill="#9fe0ff"/>`
+        `<circle cx="${x}" cy="${y}" r="${r.toFixed(1)}" fill="#9fe0ff">` +
+        `<animate attributeName="opacity" values="0.55;1;0.55" dur="3s" repeatCount="indefinite"/>` +
+        `</circle>`
       );
     })
     .join("");
-}
 
-// A rotating globe: one pre-projected frame per angle, flipped through with SMIL
-// so the planet appears to spin. Animation runs even when embedded as an image.
-function buildGlobeSvg(land, points) {
-  let frames = "";
-  for (let i = 0; i < FRAMES; i++) {
-    const lon0 = (i * 360) / FRAMES;
-    const begin = ((i * SPIN) / FRAMES).toFixed(2);
-    frames +=
-      `<g opacity="0">` +
-      `<animate attributeName="opacity" begin="${begin}s" dur="${SPIN}s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;${(1 / FRAMES).toFixed(4)};1" values="1;0;0"/>` +
-      `<path d="${frameLand(land, lon0)}" fill="none" stroke="#3f7fb3" stroke-width="0.9" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>` +
-      framePings(points, lon0) +
-      `</g>`;
-  }
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SIZE} ${SIZE}" width="${SIZE}" height="${SIZE}" role="img" aria-label="Rotating globe of where people read this from">
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${SIZE} ${SIZE}" width="${SIZE}" height="${SIZE}" role="img" aria-label="Rotating globe of where people read this from">
 <defs>
 <radialGradient id="ocean" cx="38%" cy="34%" r="75%">
 <stop offset="0%" stop-color="#10243a"/>
@@ -242,10 +244,33 @@ function buildGlobeSvg(land, points) {
 <stop offset="78%" stop-color="#74c7ec" stop-opacity="0"/>
 <stop offset="100%" stop-color="#74c7ec" stop-opacity="0.22"/>
 </radialGradient>
+<radialGradient id="limb" cx="50%" cy="50%" r="50%">
+<stop offset="55%" stop-color="#03040a" stop-opacity="0"/>
+<stop offset="100%" stop-color="#03040a" stop-opacity="0.72"/>
+</radialGradient>
+<radialGradient id="spec" cx="50%" cy="50%" r="50%">
+<stop offset="0%" stop-color="#cdeaff" stop-opacity="0.22"/>
+<stop offset="100%" stop-color="#cdeaff" stop-opacity="0"/>
+</radialGradient>
+<clipPath id="globeClip"><circle cx="${CX}" cy="${CY}" r="${R}"/></clipPath>
 </defs>
 <circle cx="${CX}" cy="${CY}" r="${R + 14}" fill="url(#halo)"/>
-<circle cx="${CX}" cy="${CY}" r="${R}" fill="url(#ocean)" stroke="#1f3a5c" stroke-width="1"/>
-${frames}
+<circle cx="${CX}" cy="${CY}" r="${R}" fill="url(#ocean)"/>
+<g clip-path="url(#globeClip)">
+<g transform="translate(${BOX} ${BOX})">
+<g>
+<animateTransform attributeName="transform" type="translate" from="0 0" to="-${MAPW} 0" dur="${SPIN}s" repeatCount="indefinite"/>
+<g id="world">
+<path d="${landPath}" fill="none" stroke="#3f7fb3" stroke-width="0.9" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>
+${pings}
+</g>
+<use xlink:href="#world" href="#world" x="${MAPW}"/>
+</g>
+</g>
+</g>
+<ellipse cx="${CX - 58}" cy="${CY - 66}" rx="120" ry="100" fill="url(#spec)" clip-path="url(#globeClip)"/>
+<circle cx="${CX}" cy="${CY}" r="${R}" fill="url(#limb)"/>
+<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="#24507a" stroke-width="1"/>
 </svg>`;
 }
 

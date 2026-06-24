@@ -49,9 +49,11 @@ programming and systems.
 #### Where this profile is being read from
 
 <a href="https://visitor-globe.kramerp28.workers.dev">
-  <img src="https://visitor-globe.kramerp28.workers.dev/globe.svg" alt="Globe showing roughly where people open this page" width="360" />
+  <img src="https://visitor-globe.kramerp28.workers.dev/globe.gif" alt="Rotating globe showing roughly where people open this page" width="340" />
 </a>
 
-<sub>Approximate and anonymous. Click to open the interactive version.</sub>
+![Visitors](https://img.shields.io/endpoint?url=https%3A%2F%2Fvisitor-globe.kramerp28.workers.dev%2Fbadge.json&style=flat-square)
+
+<sub>Approximate and anonymous. Click the globe to open the interactive version.</sub>
 
 </div>
